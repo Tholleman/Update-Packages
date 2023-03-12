@@ -1,0 +1,137 @@
+#!/bin/bash
+# Will update packages using various package managers
+
+function main {
+	await_internet_connection
+	
+	background flatpak flatpak update -y
+	background pip pip_update "pip"
+	# background pipx pipx upgrade-all
+	# background git gitUpdate "$HOME/Documents/ws/*"
+	
+	# Update packages that require sudo priviliges
+	sudo "$0" "--onlySudo"
+	
+	bold "\nflatpak update"
+	join flatpak
+	
+	bold "\npip update"
+	join pip
+	# join pipx
+	
+	# bold "\nGit"
+	# join git
+	
+	bold "\nDone"
+	if [[ "$1" == "--pause" ]]; then 
+		echo -en "\nPress enter to exit"
+		# shellcheck disable=SC2162
+		read
+	fi
+}
+
+# Simple function to make text bold
+# shellcheck disable=SC2046
+eval 'function bold {
+	echo -e "'$(tput bold)'$*'$(tput sgr0)'"
+}'
+
+# These updates require root priviliges
+# Calling each one with sudo might require the user to input their password multiple times
+# This can happen when one of the updates takes too long (also depends on the sudo timeout settings)
+if [ "$(id -u)" = 0 ]; then
+	bold "apt update"
+	apt update -y
+	
+	bold "\napt autoclean and autoremove"
+	apt autoclean -y
+	apt autoremove -y
+
+	bold "\napt full-upgrade"
+	apt full-upgrade -y
+
+	# Not really neccesary, snaps will get updated automatically
+	# I just like updating everything when running the update script
+	bold "\nsnap refresh"
+	snap refresh
+	
+	if [ "$1" != "--onlySudo" ]; then 
+		echo -en "\nSome packages might not have been updated.\nRun this script without sudo priviliges"
+	fi
+	
+	if [ "$1" = "--pause" ]; then 
+		echo -en "\nPress enter to exit"
+		# shellcheck disable=SC2162
+		read
+	fi
+	
+	exit 0
+fi
+
+# Wait for an internet connection
+# Usefull when running on boot when a connection might not have been established yet
+function await_internet_connection {
+	trap "exit" EXIT
+	inform_after=$(($(date +%s) + 5))
+	until ping -c 1 google.com >/dev/null 2>&1; do
+		if [ "$(date +%s)" -gt "$inform_after" ]; then 
+			echo "Awaiting internet connection"
+			inform_after=$(($(date +%s) + 5))
+		fi
+	done
+}
+
+# Run a process in the background and get the output later with join
+# Arguments:
+#   Variable name to store the process info in
+#   All following aruments are ran as one process
+function background {
+	local output=$(mktemp)
+	local errors=$(mktemp)
+	"${@:2}" >"${output}" 2>"${errors}" &
+	eval "${1// /_}=( \"$!\" \"${output}\" \"${errors}\" )"
+}
+
+# Get the output of a process or wait until it's finished
+# Arguments:
+#   Variable name with the process info
+function join {
+	local arrName="${1// /_}"
+	local PID=$(eval echo "\${${arrName}[0]}")
+	local output=$(eval echo "\${${arrName}[1]}")
+	local errors=$(eval echo "\${${arrName}[2]}")
+	tail -n 999 -f "$output" "--pid=$PID"
+	if ! wait "$PID" &&\
+	   [ -s "$errors" ]; then
+		bold "\nERRORS from $1"
+		cat "$errors"
+	fi
+	rm "$output" "$errors"
+}
+
+# Update all python packages
+# Arguments:
+#   Each package as their own argument
+function pip_update {
+	outdatedPipLog="$(mktemp)"
+	# shellcheck disable=SC2162
+	pip list --outdated | (read; read; cat) | cut -d ' ' -f 1 >"$outdatedPipLog"
+	for package in "$@"; do
+		if grep -q "^$package$" "$outdatedPipLog"; then
+			echo "Updating $package"
+			pip install -U "$package"
+		fi
+	done
+	rm "$outdatedPipLog"
+}
+
+# Update all git projects
+# Arguments:
+#   Each project as their own argument
+function git_update {
+	for project in "$@"; do
+		[ -d "$project/.git" ] && git -C "$project" pull
+	done
+}
+
+main "$@"
