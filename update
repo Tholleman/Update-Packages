@@ -100,10 +100,11 @@ function join {
 	local PID=$(eval echo "\${${arrName}[0]}")
 	local output=$(eval echo "\${${arrName}[1]}")
 	local errors=$(eval echo "\${${arrName}[2]}")
-	tail -n 999 -f "$output" "--pid=$PID"
+	cat "$output"
+	tail -n 0 -f "$output" "--pid=$PID"
 	if ! wait "$PID" &&\
 	   [ -s "$errors" ]; then
-		bold "\nERRORS from $1"
+		bold "ERRORS from $1"
 		cat "$errors"
 	fi
 	rm "$output" "$errors"
@@ -129,9 +130,16 @@ function pip_update {
 # Arguments:
 #   Each project as their own argument
 function git_update {
+	ec=0
+	newline=false
 	for project in "$@"; do
-		[ -d "$project/.git" ] && git -C "$project" pull
+		if [ -d "$project/.git" ]; then
+			$newline && echo ""; newline=true
+			basename "$project"
+			git -C "$project" pull || ec=1
+		fi
 	done
+	return $ec
 }
 
 main "$@"
